@@ -8,13 +8,18 @@ const querystring = require('querystring')
 const tabletojson = require('tabletojson')
 
 const login_base_url = "https://internetbanken.privat.nordea.se/nsp/login"
+const core_base_url = "https://internetbanken.privat.nordea.se/nsp/core"
 
 function getOptions(url) {
   return {
     proxy: "http://127.0.0.1:8888",
     url: url,
     jar: true,
-     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.132 Safari/537.36' }
+     headers: {
+       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.132 Safari/537.36",
+       "Accept-Language": "sv,sv-SE;q=0.9,en-US;q=0.8,en;q=0.7",
+       "Cache-Control": "max-age=0"
+     }
   }
 }
 
@@ -78,6 +83,8 @@ function onLoadAccountPage(error, response, body) {
 
   const options = getOptions(absolute_first_account_link)
 
+options.headers.Referer = "https://internetbanken.privat.nordea.se/nsp/core"
+
   console.log("Loading first account:")
 
   request.get(options, onLoadFirstAccountOverview)
@@ -121,16 +128,16 @@ function onLoadFirstAccountOverview(error, response, body) {
   var form = getFormState($)
 
   form.defaultcommand = "accounttransactions$getnewaccounttransactions"
-
+  form.commandorigin = "0.ucaccounttransactionstabcw"
   form.transactionaccount	= 1
-  form.transactionPeriod = 1
+  form.transactionPeriod = 0
 
 //  options.headers['Content-Type'] = 'application/x-www-form-urlencoded'
 //  options.headers['Content-Length'] = postData.length
 
 //  console.log("POSTing login ---")
 
-  const options = getOptions(login_base_url)
+  const options = getOptions(core_base_url)
   options.form = form
 
   console.log("Loading 1/1:")
