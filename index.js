@@ -26,7 +26,7 @@ function getOptions(url) {
 function onLoadAccountPage(error, response, body) {
   console.error('error:', error); // Print the error if one occurred
   console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
-  console.log('body:', body); // Print the HTML for the Google homepage.
+//  console.log('body:', body); // Print the HTML for the Google homepage.
 
 
   // currentaccountsoverviewtable
@@ -48,7 +48,7 @@ function onLoadAccountPage(error, response, body) {
   const outer_converted_table = tabletojson.convert(account_table_html, {stripHtmlFromCells: false});
   const converted_table = outer_converted_table[0]; // Why on earth do tabletojson wrap this in extra dimension?
 
-  console.log(converted_table);
+//  console.log(converted_table);
 
   var accounts = []
 
@@ -58,7 +58,7 @@ function onLoadAccountPage(error, response, body) {
 
     const row_name_html = row["Namn"]
 
-    console.log("parsing " + row_name_html)
+  //  console.log("parsing " + row_name_html)
 
     const $ = cheerio.load(row_name_html)
     const name_element = $("A")
@@ -74,7 +74,7 @@ function onLoadAccountPage(error, response, body) {
      })
   }
 
-  console.log(accounts)
+//  console.log(accounts)
 
 
   const first_account_relative_url = accounts[0].url
@@ -82,8 +82,6 @@ function onLoadAccountPage(error, response, body) {
   const absolute_first_account_link = new URL(first_account_relative_url, login_base_url)
 
   const options = getOptions(absolute_first_account_link)
-
-options.headers.Referer = "https://internetbanken.privat.nordea.se/nsp/core"
 
   console.log("Loading first account:")
 
@@ -115,16 +113,17 @@ function getFormState($)
 function onLoadSpecifiedAccountAndMonthPage(error, response, body) {
   console.error('error:', error); // Print the error if one occurred
   console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
-  console.log('body:', body); // Print the HTML for the Google homepage.
+//  console.log('body:', body); // Print the HTML for the Google homepage.
 }
 
-function onLoadFirstAccountOverview(error, response, body) {
+function onLoadCSV(error, response, body) {
   console.error('error:', error); // Print the error if one occurred
   console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
-  console.log('body:', body); // Print the HTML for the Google homepage.
+ console.log('body:', body); // Print the HTML for the Google homepage.
+}
 
-  const $ = cheerio.load(body);
-
+function loadSpecifiedAccountAndMonthPage($)
+{
   var form = getFormState($)
 
   form.defaultcommand = "accounttransactions$getnewaccounttransactions"
@@ -139,17 +138,40 @@ function onLoadFirstAccountOverview(error, response, body) {
 
   const options = getOptions(core_base_url)
   options.form = form
+  options.headers.Referer = "https://internetbanken.privat.nordea.se/nsp/core"
 
   console.log("Loading 1/1:")
 
   request.post(options, onLoadSpecifiedAccountAndMonthPage)
 }
 
+function onLoadFirstAccountOverview(error, response, body) {
+  console.error('error:', error); // Print the error if one occurred
+  console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
+//  console.log('body:', body); // Print the HTML for the Google homepage.
+
+  const $ = cheerio.load(body);
+
+ //  loadSpecifiedAccountAndMonthPage($)
+
+ const relative_CSV_link = $('a:contains("CSV")').attr('href')
+
+ console.log("relative_CSV_link:" + relative_CSV_link)
+
+ const absolute_CSV_link = new URL(relative_CSV_link, login_base_url)
+
+ console.log("absolute_CSV_link:" + absolute_CSV_link)
+
+ const options = getOptions(absolute_CSV_link)
+
+ request.get(options, onLoadCSV)
+}
+
 
 function onLoadSimpleLoginForm(error, response, body) {
   console.error('error:', error); // Print the error if one occurred
   console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
-  console.log('body:', body); // Print the HTML for the Google homepage.
+//  console.log('body:', body); // Print the HTML for the Google homepage.
 
   const $ = cheerio.load(body);
 
@@ -178,7 +200,7 @@ function onLoadSimpleLoginForm(error, response, body) {
 function onLoadDefaultLoginPage(error, response, body) {
   console.error('error:', error); // Print the error if one occurred
   console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
-  console.log('body:', body); // Print the HTML for the Google homepage.
+  // console.log('body:', body); // Print the HTML for the Google homepage.
 
   const $ = cheerio.load(body);
 
