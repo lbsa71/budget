@@ -1,5 +1,7 @@
 const request = require('request')
 request.debug = true
+require('request-debug')(request);
+
 process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0'; // Ignore 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' authorization error
 
 const cheerio = require('cheerio')
@@ -11,6 +13,8 @@ const login_base_url = "https://internetbanken.privat.nordea.se/nsp/login"
 const core_base_url = "https://internetbanken.privat.nordea.se/nsp/core"
 
 function getOptions(url) {
+  console.log("Sleeping...")
+
   return {
     proxy: "http://127.0.0.1:8888",
     url: url,
@@ -18,7 +22,15 @@ function getOptions(url) {
      headers: {
        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.132 Safari/537.36",
        "Accept-Language": "sv,sv-SE;q=0.9,en-US;q=0.8,en;q=0.7",
-       "Cache-Control": "max-age=0"
+       "Cache-Control": "max-age=0",
+       "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3",
+    //   "Accept-Encoding": "gzip, deflate, br",
+       "Connection": "keep-alive",
+       "Sec-Fetch-Mode": "navigate",
+       "Sec-Fetch-Site": "same-origin",
+       "Upgrade-Insecure-Requests": "1",
+       "Host": "internetbanken.privat.nordea.se",
+       "Origin": "https://internetbanken.privat.nordea.se"
      }
   }
 }
@@ -101,12 +113,14 @@ function getFormState($)
   const command = "formcommand"
 
   return {
+    usecase,
+    command,
    guid,
    commandorigin,
    fpid,
-   hash,
-   usecase,
-   command
+   hash
+
+   // ,JAVASCRIPT_DETECTED
   }
 }
 
@@ -122,27 +136,46 @@ function onLoadCSV(error, response, body) {
  console.log('body:', body); // Print the HTML for the Google homepage.
 }
 
-function loadSpecifiedAccountAndMonthPage($)
+let sleep = require('util').promisify(setTimeout)
+
+function loadSpecifiedAccountAndMonthPage($, referer)
 {
   var form = getFormState($)
 
   form.defaultcommand = "accounttransactions$getnewaccounttransactions"
   form.commandorigin = "0.ucaccounttransactionstabcw"
+//  form["accounttransactions$basicsearchtransactions"]="&nbsp;&nbsp;Fortsätt&nbsp;&nbsp"
   form.transactionaccount	= 1
   form.transactionPeriod = 0
 
-//  options.headers['Content-Type'] = 'application/x-www-form-urlencoded'
 //  options.headers['Content-Length'] = postData.length
 
 //  console.log("POSTing login ---")
 
   const options = getOptions(core_base_url)
   options.form = form
-  options.headers.Referer = "https://internetbanken.privat.nordea.se/nsp/core"
+  options.headers.Referer = referer
+  options.headers["Accept-Encoding"] ="gzip, deflate, br"
+  options.headers['Content-Type'] = 'application/x-www-form-urlencoded'
 
   console.log("Loading 1/1:")
 
-  request.post(options, onLoadSpecifiedAccountAndMonthPage)
+  sleep(10000).then(() => request.post(options, onLoadSpecifiedAccountAndMonthPage))
+}
+
+function loadCSV($)
+{
+   const relative_CSV_link = $('a:contains("CSV")').attr('href')
+
+   console.log("relative_CSV_link:" + relative_CSV_link)
+
+   const absolute_CSV_link = new URL(relative_CSV_link, login_base_url)
+
+   console.log("absolute_CSV_link:" + absolute_CSV_link)
+
+   const options = getOptions(absolute_CSV_link)
+
+   request.get(options, onLoadCSV)
 }
 
 function onLoadFirstAccountOverview(error, response, body) {
@@ -152,19 +185,8 @@ function onLoadFirstAccountOverview(error, response, body) {
 
   const $ = cheerio.load(body);
 
- //  loadSpecifiedAccountAndMonthPage($)
-
- const relative_CSV_link = $('a:contains("CSV")').attr('href')
-
- console.log("relative_CSV_link:" + relative_CSV_link)
-
- const absolute_CSV_link = new URL(relative_CSV_link, login_base_url)
-
- console.log("absolute_CSV_link:" + absolute_CSV_link)
-
- const options = getOptions(absolute_CSV_link)
-
- request.get(options, onLoadCSV)
+  loadSpecifiedAccountAndMonthPage($, response.request.uri)
+  // loadCSV($)
 }
 
 
@@ -177,12 +199,10 @@ function onLoadSimpleLoginForm(error, response, body) {
 
   var form = getFormState($)
 
-  form.usecase = "base"
-  form.command = "formcommand"
-  form.JAVASCRIPT_DETECTED = true
   form.userid = "197102162539"
   form.pin = '0820'
   form["commonlogin$loginLight"] = "Logga in"
+  form.JAVASCRIPT_DETECTED = true
 
 //  options.headers['Content-Type'] = 'application/x-www-form-urlencoded'
 //  options.headers['Content-Length'] = postData.length
