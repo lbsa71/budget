@@ -1,242 +1,508 @@
-const request = require('request')
-request.debug = true
-require('request-debug')(request);
+import fs from 'fs'
+import { exit } from 'process'
+import internal from 'stream'
 
-process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0'; // Ignore 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' authorization error
+const dir = './exports/'
 
-const cheerio = require('cheerio')
-const url = require('url')
-const querystring = require('querystring')
-const tabletojson = require('tabletojson')
+var cache = {}
 
-const login_base_url = "https://internetbanken.privat.nordea.se/nsp/login"
-const core_base_url = "https://internetbanken.privat.nordea.se/nsp/core"
+const FIRST_MONTH = '2021/08'
+const LAST_MONTH = '2022/07'
+const FIRST_SAVINGS_MONTH = new Date('2022-08-01')
+const MAX_SAVINGS_AMOUNT = 18000
 
-function getOptions(url) {
-  console.log("Sleeping...")
+const title_blacklist = [
+  "Reservation Kortköp ".toLowerCase(),
+]
 
-  return {
-    proxy: "http://127.0.0.1:8888",
-    url: url,
-    jar: true,
-     headers: {
-       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.132 Safari/537.36",
-       "Accept-Language": "sv,sv-SE;q=0.9,en-US;q=0.8,en;q=0.7",
-       "Cache-Control": "max-age=0",
-       "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3",
-    //   "Accept-Encoding": "gzip, deflate, br",
-       "Connection": "keep-alive",
-       "Sec-Fetch-Mode": "navigate",
-       "Sec-Fetch-Site": "same-origin",
-       "Upgrade-Insecure-Requests": "1",
-       "Host": "internetbanken.privat.nordea.se",
-       "Origin": "https://internetbanken.privat.nordea.se"
-     }
-  }
-}
+const own_accounts = [
+  { account: "3059 23 21835", category: "Susanne Cooper"},
+  { account: "4190 18 69462", category: "Lars Andersson"},
+  { account: "4190 00 96605", category: "Ospecificerat,Stefans Lönekonto"},
+  { account: "3059 10 50048", category: "Buffertkonto"},
+  { account: "4190 00 95633", category: "Ospecificerat,Stefans Visa"},
+  { account: "3059 01 66158", category: "Ospecificerat,Hedvigs Visa"},
+  { account: "3059 22 86045", category: "Hedvigs Sparkonto"},
+] 
 
-function onLoadAccountPage(error, response, body) {
-  console.error('error:', error); // Print the error if one occurred
-  console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
-//  console.log('body:', body); // Print the HTML for the Google homepage.
+const title_map = [
+  { startsWith: "Swish betalning".toLowerCase(), category: "Ospecificerat,Kontant"},
+  { startsWith: "Swish inbetalning".toLowerCase(), category: "Ospecificerat,Kontant"}, 
 
+  { includes: "Överföring ANDERSSON,STEFAN".toLowerCase(), category: "Överföringar"},  
+  { includes: "Överföring SUNDBERG LINDELL,HED".toLowerCase(), category: "Överföringar"},  
+ 
+  { includes: "Lön".toLowerCase(), category: "Anställning,Lön"}, 
+  { startsWith: "BARNBDR 198010154824".toLowerCase(), category: "Barn"}, 
+  { startsWith: "Studiebidrag 060731-9555".toLowerCase(), category: "Barn"},
+  
+  { includes: "Skatt".toLowerCase(), category: "Anställning,Skatt"},  
+  { includes: "SKATTEVERKET".toLowerCase(), category: "Anställning,Skatt"},  
+    
+  { includes: "AKAVIA".toLowerCase(), category: "Anställning,Försäkring"}, 
+  { includes: "Vårdförbundet".toLowerCase(), category: "Anställning,Försäkring"}, 
 
-  // currentaccountsoverviewtable
+  { includes: "COOP ".toLowerCase(), category: "Mat,Livsmedel"},
+  { includes: "COOOP ".toLowerCase(), category: "Mat,Livsmedel"}, //!?
+  { includes: "ICA".toLowerCase(), category: "Mat,Livsmedel"},  
+  { includes: "WILLYS".toLowerCase(), category: "Mat,Livsmedel"},  
+  { includes: "NETTO".toLowerCase(), category: "Mat,Livsmedel"},  
+  { includes: " FISK".toLowerCase(), category: "Mat,Livsmedel"},  
+  { includes: "CHARK".toLowerCase(), category: "Mat,Livsmedel"},  
+  { includes: "Sparhallen".toLowerCase(), category: "Mat,Livsmedel"},  
+  { includes: "K supermarket".toLowerCase(), category: "Mat,Livsmedel"}, 
+  { includes: "BAGERI".toLowerCase(), category: "Mat,Livsmedel"}, 
+  { includes: "GODEBERGS".toLowerCase(), category: "Mat,Livsmedel"}, 
+  
+  { includes: "PIZZA".toLowerCase(), category: "Mat,Restaurang"}, 
+  { includes: "PIZZERIA".toLowerCase(), category: "Mat,Restaurang"}, 
+  { includes: "RESTAURANG".toLowerCase(), category: "Mat,Restaurang"}, 
+  { includes: "SUSHI".toLowerCase(), category: "Mat,Restaurang"}, 
+  { includes: "MCD".toLowerCase(), category: "Mat,Restaurang"},  
+  { includes: "MEKONG".toLowerCase(), category: "Mat,Restaurang"}, 
+  { includes: "KEBNEKAISE".toLowerCase(), category: "Mat,Restaurang"}, 
 
-  const $ = cheerio.load(body);
+  { includes: "LILLA SPINNERIET".toLowerCase(), category: "Mat,Restaurang"}, 
+  { includes: "SIBYLLA".toLowerCase(), category: "Mat,Restaurang"}, 
+  { includes: "Seven Vending".toLowerCase(), category: "Mat,Restaurang"}, 
+  { includes: "MASALA KITCHEN".toLowerCase(), category: "Mat,Restaurang"}, 
+  { includes: "PINCHOS".toLowerCase(), category: "Mat,Restaurang"}, 
+  { includes: "FAMILJEN".toLowerCase(), category: "Mat,Restaurang"}, 
+  
+  { includes: "ESPRESSO".toLowerCase(), category: "Mat,Restaurang"}, 
+  { includes: "KAFFE".toLowerCase(), category: "Mat,Restaurang"}, 
+  { includes: "CONDECO".toLowerCase(), category: "Mat,Restaurang"}, 
+  
+  { includes: "GODIS".toLowerCase(), category: "Mat,Godis"}, 
+  { includes: "KANDYZ".toLowerCase(), category: "Mat,Godis"}, 
+  
+  { includes: "5580-3084 Centrala Stu".toLowerCase(), category: "Studier"},
+  
+  { startsWith: "Omsättning lån".toLowerCase(), category: "Boende,Lån"},
+ 
+  { includes: "SKOGSBO SAMF".toLowerCase(), category: "Boende,Avgift"},
 
-// <a href="login?usecase=commonlogin&amp;command=commonlogintabcommand&amp;guid=a6L2j8v10qERP5HKBZAw4gCC&amp;commandorigin=0.commonlogintabview_SE&amp;fpid=9w0jTYoTAG0u43ZyYCysoACC7048933529372305819xxxxxxxxx&amp;commonlogintab=2&amp;hash=MUyOq7U85eXcOfeHjBU7xACC"></a>
+  { includes: "5233-9330".toLowerCase(), category: "Boende,Energi"},  // Energi
+  { includes: "5552-2635".toLowerCase(), category: "Boende,Energi"}, //Ellevio
+  { includes: "KJELL O CO".toLowerCase(), category: "Boende,Tillbehör"},
+  { includes: "JULA".toLowerCase(), category: "Boende,Tillbehör"},
+  { includes: "BYGGMAX".toLowerCase(), category: "Boende,Tillbehör"},
+  { includes: "RUSTA".toLowerCase(), category: "Boende,Tillbehör"},
+  { includes: "BAUHAUS".toLowerCase(), category: "Boende,Tillbehör"},
+  { includes: "GE KAS".toLowerCase(), category: "Boende,Tillbehör"},
+  { includes: "GEKAS".toLowerCase(), category: "Boende,Tillbehör"},
+  
+  { includes: "Elgiganten".toLowerCase(), category: "Boende,Apparater"},
+  { includes: "NETONNET".toLowerCase(), category: "Boende,Apparater"},
+  
+  { includes: "IKEA".toLowerCase(), category: "Boende,Inredning"},
+  { includes: "JYSK".toLowerCase(), category: "Boende,Inredning"},
+  
+  { includes: "712-7186 FIRMA MIKAEL".toLowerCase(), category: "Boende,ROT"},
+  { includes: "5308-5650 TÄRNBRANT LA".toLowerCase(), category: "Boende,ROT"},
+  
+  { includes: "LINDEX".toLowerCase(), category: "Kläder"},
+  { includes: "LAGER 157".toLowerCase(), category: "Kläder"},
+  { includes: "ZARA".toLowerCase(), category: "Kläder"},
+  { includes: "JACK O JONES".toLowerCase(), category: "Kläder"},
+  { includes: "KappAhl".toLowerCase(), category: "Kläder"},
+  { includes: "SKOPUNKTEN".toLowerCase(), category: "Kläder"},
+  { includes: "ADIDAS".toLowerCase(), category: "Kläder"},
+  
+  { includes: "5361-1737".toLowerCase(), category: "Kommunikation"}, //Tele2
 
-//console.log("table:")
+  { includes: "Systembolaget".toLowerCase(), category: "Upplevelser,Alkohol"}, 
+  { includes: "BACKSTAGE ROCKBAR".toLowerCase(), category: "Upplevelser,Alkohol"},
+  { includes: "dorsia".toLowerCase(), category: "Upplevelser,Alkohol"},  
+ 
+  { startsWith: "Swish betalning ANDERSSON LINDELL,L".toLowerCase(), category: "Barn,Lisa"},
+  { startsWith: "Månadspeng 110507-5343".toLowerCase(), category: "Barn,Lisa"},
+  { startsWith: "Swish betalning ANDERSSON LINDELL,E".toLowerCase(), category: "Barn,Ellen"},
+  { startsWith: "Månadspeng 080822-5304".toLowerCase(), category: "Barn,Ellen"},
+  { startsWith: "Överföring 4249 17 52332".toLowerCase(), category: "Barn,Ellen"},
 
-  const account_table_element = $('#currentaccountsoverviewtable')
+  { includes: "Gunnebo Rytta".toLowerCase(), category: "Barn,Aktiviteter"},
+  { includes: "BLOMGREN, LINNEA".toLowerCase(), category: "Barn,Aktiviteter"},
+  { includes: "PAULA JOHNSSON".toLowerCase(), category: "Barn,Aktiviteter"},
+  { includes: "ANDREASSONS MUSIK".toLowerCase(), category: "Barn,Aktiviteter"},
+  { includes: "BASKET".toLowerCase(), category: "Barn,Aktiviteter"},
 
-  // console.log(account_table_element)
+  { includes: "LEKIA".toLowerCase(), category: "Barn,Presenter"},
+  
+  { startsWith: "Swish betalning ANDERSSON LINDELL,V".toLowerCase(), category: "Barn,Viktor"},
+  { startsWith: "Överföring 4249 17 36485".toLowerCase(), category: "Barn,Viktor"},
+  
+  { includes: "UNIVERSEUM".toLowerCase(), category: "Upplevelser"},
+  { includes: "Klarna*ticket univer".toLowerCase(), category: "Upplevelser"},
+  { includes: "Björn Ek Wahlqvist".toLowerCase(), category: "Upplevelser"}, 
+  { includes: "FESTIVALBUSSEN".toLowerCase(), category: "Upplevelser"}, 
+  
+  { includes: "TICKSTER".toLowerCase(), category: "Upplevelser,Konsert"},
+  { includes: "Tidal".toLowerCase(), category: "Upplevelser,Media"},
+  { includes: "Spotify".toLowerCase(), category: "Upplevelser,Media"},
+  { includes: "NETFLIX".toLowerCase(), category: "Upplevelser,Media"},
+  { includes: "SoundCloud".toLowerCase(), category: "Upplevelser,Media"},
+  { includes: "Patreon".toLowerCase(), category: "Upplevelser,Media"},
+  { includes: "TUNEMYMUSIC".toLowerCase(), category: "Upplevelser,Media"},
+  { includes: "APPLE ".toLowerCase(), category: "Upplevelser,Media"},
+  { includes: " HBO ".toLowerCase(), category: "Upplevelser,Media"},
+   
+  { includes: "BIOPALATSET ".toLowerCase(), category: "Upplevelser,Media"},
+  { includes: "FILMSTADEN ".toLowerCase(), category: "Upplevelser,Media"},
+  
+  { includes: "Stena Line".toLowerCase(), category: "Upplevelser,Resor"},
+  { includes: "GOTLAND".toLowerCase(), category: "Upplevelser,Resor"},
+  { includes: "liftkort".toLowerCase(), category: "Upplevelser,Resor"},
+  { includes: "Fjatervale".toLowerCase(), category: "Upplevelser,Resor"},
+  { includes: "Fjätervåle".toLowerCase(), category: "Upplevelser,Resor"},
+  { includes: "FJETERVALEN".toLowerCase(), category: "Upplevelser,Resor"},
+  { includes: "SJ AB".toLowerCase(), category: "Upplevelser,Resor"},
+  { includes: "ROSELLA".toLowerCase(), category: "Upplevelser,Resor"},
+  { includes: "HOTELL".toLowerCase(), category: "Upplevelser,Resor"},
+  { includes: "LEGOLAND".toLowerCase(), category: "Upplevelser,Resor"},
+  
+  { includes: "POLISEN 1400 GO".toLowerCase(), category: "Upplevelser,Resor"}, // Pass
+  { includes: "Stiftelsen Nordens A".toLowerCase(), category: "Upplevelser,Resor"},
+  
+  { includes: "AKADEMIBOKHANDE".toLowerCase(), category: "Upplevelser,Litteratur"},
+  
+  { includes: "VÄSTTRAFIK AB".toLowerCase(), category: "Transport,Kollektivtrafik"},
+  { includes: "BG 5051-6822".toLowerCase(), category: "Transport,Skatt"},
+  { includes: "TRÄNGSELSKATT".toLowerCase(), category: "Transport,Skatt"},  
+  { includes: "Länsförsäkrin".toLowerCase(), category: "Transport,Försäkring"},  
+  
+  { includes: "INGO".toLowerCase(), category: "Transport,Drivmedel"},
+  { includes: "OKQ8".toLowerCase(), category: "Transport,Drivmedel"},
+  { includes: "PREEM".toLowerCase(), category: "Transport,Drivmedel"},
+  { includes: "CIRCLE K".toLowerCase(), category: "Transport,Drivmedel"},
+  { includes: " SHELL ".toLowerCase(), category: "Transport,Drivmedel"},
+  
+  { includes: "Toyota".toLowerCase(), category: "Transport,Service"},
+  { includes: "PARKERING".toLowerCase(), category: "Transport,Parkering"},
+  { includes: "EasyPark".toLowerCase(), category: "Transport,Parkering"},
+  
+  { includes: "BATBIKE".toLowerCase(), category: "Transport,Cykel"},  
+  { includes: "SPORTSON".toLowerCase(), category: "Transport,Cykel"},
 
-  const account_table_html = $.html(account_table_element)
+  { includes: "JBF".toLowerCase(), category: "Djur,Mat"}, 
+  { includes: "LINDOME O JÄRN BYGG".toLowerCase(), category: "Djur,Mat"}, 
 
-  // console.log(account_table_html)
+  { includes: "AGRIA".toLowerCase(), category: "Djur,Försäkring"}, 
+  { includes: "IF SKADEFÖRS".toLowerCase(), category: "Försäkring"},
+  { includes: "FRISKTANDV".toLowerCase(), category: "Hälsa,Försäkring"}, 
+  
+  { includes: "Nordea Vardagspaket".toLowerCase(), category: "Avgifter,Bank"}, 
+  
+  { includes: "NOTKARNAN".toLowerCase(), category: "Hälsa"}, 
+  { includes: "NÖTKARNAN".toLowerCase(), category: "Hälsa"}, 
+  { includes: "APOTEK".toLowerCase(), category: "Hälsa"},  
+  { includes: "LOP O SKO".toLowerCase(), category: "Hälsa"}, 
+  { includes: "WALLEY".toLowerCase(), category: "Hälsa"}, 
+  
+  { includes: "Kicks".toLowerCase(), category: "Skönhet"},
+  { includes: "DERMA CURE".toLowerCase(), category: "Skönhet"},
+  
+  { includes: "SALONG EKEN".toLowerCase(), category: "Skönhet,Frisör"},
+  { includes: "KLIPPOTEKET".toLowerCase(), category: "Skönhet,Frisör"},
+  { includes: "EXOMEI".toLowerCase(), category: "Skönhet,Frisör"},
+  { includes: "BARBERQUICK".toLowerCase(), category: "Skönhet,Frisör"},
+  
+  { startsWith: "Omsättning lån 3992 33 75501".toLowerCase(), category: "Susanne Cooper"},
+  //{ includes: "COOPER,SUSANNE".toLowerCase(), category: "Susanne"},
+  //{ startsWith: "Överföring ANDERSSON,LARS".toLowerCase(), category: "Lars"},
+  { includes: "Bil 4190 18 69462".toLowerCase(), category: "Lars Andersson"},
+  { includes: "Autogiro DNB Finans".toLowerCase(), category: "Lars Andersson"}, 
+  
+  
+  
+]
 
-  const outer_converted_table = tabletojson.convert(account_table_html, {stripHtmlFromCells: false});
-  const converted_table = outer_converted_table[0]; // Why on earth do tabletojson wrap this in extra dimension?
+var output;
 
-//  console.log(converted_table);
-
-  var accounts = []
-
-  for(var i=0;i<converted_table.length;i++)
+function process(file, line)
+{
+  try
   {
-    const row = converted_table[i]
+      
+    if(cache[line] === true)
+    {
+      console.log("Eliminated Duplicate: " + line)
+      return
+    }
+    else
+    {
+      cache[line] = true
+    }
 
-    const row_name_html = row["Namn"]
+    const cols = line.split(';')
 
-  //  console.log("parsing " + row_name_html)
+    const day = cols[0].replaceAll('.', '-')
+    const month = day.substr(0, 7)
 
-    const $ = cheerio.load(row_name_html)
-    const name_element = $("A")
+    const amount = parseInt(cols[1].replace(',', '.'))
+    const from = cols[2]
+    const to = cols[3]
+    const _name = cols[4]
+    const orig_title = cols[5]
+    const title = orig_title.toLowerCase();
+    const balance = cols[6]
+    const currency = cols[7]
 
-    const url = name_element.attr("href")
-    const name = name_element.text()
-    const acct = row["Kontonummer"].replace("*", "")
+    var category
 
-     accounts.push({
-       name,
-       url,
-       acct
-     })
+    if(month < FIRST_MONTH) return;
+    if(month > LAST_MONTH) return;
+
+    if(title_blacklist.some(x => title.startsWith(x)))
+    {
+      console.log("Title Blacklisted: " + line)
+      return;
+    }
+
+    if(currency != 'SEK')
+    {
+      console.log("Currency Blacklisted: " + currency)
+      return;
+    }
+
+
+    own_accounts.forEach(map => {
+      const account = map.account
+
+      // if(from === account)
+      // {
+      //   if(title.startsWith("Swish inbetalning SUNDBERG LINDELL,".toLowerCase()) 
+      //     || title.startsWith("Swish betalning SUNDBERG LINDELL,HE".toLowerCase())
+      //     || title.startsWith("Swish betalning ANDERSSON,STEFAN".toLowerCase())
+      //     || title.startsWith("Swish inbetalning ANDERSSON,STEFAN".toLowerCase()))
+      //   {
+      //     category = "Överföringar"
+      //   }
+      // }
+    
+      if(!category)
+      {
+        if((to === account) || (from === account))
+        {
+          own_accounts.forEach(target => {
+            const pattern = "överföring " + target.account
+
+            if(title.startsWith(pattern))
+            {
+              category = "Överföringar"
+            }
+          })
+          
+          if(!category) {
+            category = map.category
+          }
+        }
+      }
+    })
+
+
+    title_map.forEach(map => {
+      if(map.startsWith)
+      {
+        if(title.startsWith(map.startsWith))
+        {
+          category = map.category
+        }
+      }
+
+      if(map.includes)
+      {
+        if(title.includes(map.includes))
+        {
+          category = map.category
+        }
+      }
+    });
+
+    if(!category)
+    {
+      category = "Ospecificerat"
+    }
+
+    const categories = category.split(',')
+    if(categories.length == 1) categories[1]=categories[0]
+
+    w.write(month  + '\t' + day + '\t' + amount  + '\t' + orig_title  + '\t' + from  + '\t' + to  + '\t' + categories.join('\t') + '\n')
+
+    // console.log(amount, title)
+  }
+  catch(e)
+  {
+    
+    console.log(file)
+    console.log(line)
+    console.trace()
+  }
+}
+
+const w = fs.createWriteStream('output.csv')
+w.write('Month'  + '\t' + 'Date' + '\t' + 'Amount'  + '\t' + 'Title'  + '\t' + 'From'  + '\t' + 'To' + '\t' + 'Category'  + '\t' + 'Subcategory' + '\n')
+
+const files = fs.readdirSync(dir)
+
+for (const file of files) {
+
+  if(file[0] === '.') continue
+
+  fs.readFile(dir + file, function(err, data) {
+    if(err) throw err;
+
+    const lines = (data.toString().replace(/\r\n/g,'\n').split('\n'))
+    const header = lines.shift();
+
+    for(let line of lines) {
+        process(file, line);
+    }
+  });
+}
+
+const now = Date.parse(FIRST_SAVINGS_MONTH) 
+// const day = now.getFullYear() * 100 + now.getMonth() + 1
+
+console.log("Current Month:")
+
+var max_saving_date = ''
+var max_saving_amount = 0
+var total_saving_amount = 0
+const savings = []
+
+
+function monthDiff(d1, d2) {
+  var months;
+  months = (d2.getFullYear() - d1.getFullYear()) * 12;
+  months -= d1.getMonth();
+  months += d2.getMonth();
+  return months <= 0 ? 0 : months;
+}
+
+function add_savings(line)
+{
+  const arr=line.split("::")
+
+  if(arr.length > 2)
+  {
+    const date =new Date(Date.parse(arr[0]))
+
+    // console.log("date:" + date.toString())
+    const month = monthDiff(FIRST_SAVINGS_MONTH, date)
+    const amount = 1*arr[1]
+    const text = arr[2]
+
+    total_saving_amount += amount
+
+    //console.log("From " + FIRST_SAVINGS_MONTH.toLocaleDateString() + " to " + date.toLocaleDateString() + " there is " + month + " to save " + total_saving_amount + " for " + text)
+
+    if(date > max_saving_date) max_saving_date = new Date(date)
+
+    savings.push({month, amount, text})
+
+
+  //console.log("Number of savings" + savings.length)
+  }
+}
+
+
+fs.readFile("savings.txt", function(err, data) {
+  if(err) throw err;
+
+  const lines = (data.toString().replace(/\r\n/g,'\n').split('\n'))
+  const header = lines.shift()
+
+  for(let line of lines) {
+      add_savings(line);
   }
 
-//  console.log(accounts)
+  console.log(max_saving_date.toString())
 
+  const months = monthDiff(FIRST_SAVINGS_MONTH, max_saving_date) + 1
+  const mean_savings_per_month = total_saving_amount / months
 
-  const first_account_relative_url = accounts[0].url
-
-  const absolute_first_account_link = new URL(first_account_relative_url, login_base_url)
-
-  const options = getOptions(absolute_first_account_link)
-
-  console.log("Loading first account:")
-
-  request.get(options, onLoadFirstAccountOverview)
-}
-
-function getFormState($)
-{
-  const guid = $("input[name=guid]").val()
-  const commandorigin = $("input[name=commandorigin]").val()
-  const fpid = $("input[name=fpid]").val()
-  const hash = $("input[name=hash]").val()
-
-  console.log("guid:" + guid + " commandorigin:" + commandorigin + " fpid:" + fpid + " hash:" + hash + "")
-
-  const usecase = "base"
-  const command = "formcommand"
-
-  return {
-    usecase,
-    command,
-   guid,
-   commandorigin,
-   fpid,
-   hash
-
-   // ,JAVASCRIPT_DETECTED
+  // console.log(months)
+  //console.log(total_saving_amount)
+  // console.log(mean_savings_per_month)
+  if(total_saving_amount > (MAX_SAVINGS_AMOUNT*months))
+  {
+    console.log("This aint gonna fly. You need at least " + mean_savings_per_month + " as MAX_SAVINGS_AMOUNT")
+    exit(0)
   }
-}
+  const per_month = Array.apply(null, Array(months)).map(function (x, i) { return 0; })
 
-function onLoadSpecifiedAccountAndMonthPage(error, response, body) {
-  console.error('error:', error); // Print the error if one occurred
-  console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
-//  console.log('body:', body); // Print the HTML for the Google homepage.
-}
+  // Allocating
+  for(var s=0;s<savings.length;s++)
+  {
+    const saving=savings[s]
 
-function onLoadCSV(error, response, body) {
-  console.error('error:', error); // Print the error if one occurred
-  console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
- console.log('body:', body); // Print the HTML for the Google homepage.
-}
+   // console.log("applying saving "+saving.month+" for a total of "+saving.amount)
 
-let sleep = require('util').promisify(setTimeout)
-
-function loadSpecifiedAccountAndMonthPage($, referer)
-{
-  var form = getFormState($)
-
-  form.defaultcommand = "accounttransactions$getnewaccounttransactions"
-  form.commandorigin = "0.ucaccounttransactionstabcw"
-//  form["accounttransactions$basicsearchtransactions"]="&nbsp;&nbsp;Fortsätt&nbsp;&nbsp"
-  form.transactionaccount	= 1
-  form.transactionPeriod = 0
-
-//  options.headers['Content-Length'] = postData.length
-
-//  console.log("POSTing login ---")
-
-  const options = getOptions(core_base_url)
-  options.form = form
-  options.headers.Referer = referer
-  options.headers["Accept-Encoding"] ="gzip, deflate, br"
-  options.headers['Content-Type'] = 'application/x-www-form-urlencoded'
-
-  console.log("Loading 1/1:")
-
-  sleep(10000).then(() => request.post(options, onLoadSpecifiedAccountAndMonthPage))
-}
-
-function loadCSV($)
-{
-   const relative_CSV_link = $('a:contains("CSV")').attr('href')
-
-   console.log("relative_CSV_link:" + relative_CSV_link)
-
-   const absolute_CSV_link = new URL(relative_CSV_link, login_base_url)
-
-   console.log("absolute_CSV_link:" + absolute_CSV_link)
-
-   const options = getOptions(absolute_CSV_link)
-
-   request.get(options, onLoadCSV)
-}
-
-function onLoadFirstAccountOverview(error, response, body) {
-  console.error('error:', error); // Print the error if one occurred
-  console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
-//  console.log('body:', body); // Print the HTML for the Google homepage.
-
-  const $ = cheerio.load(body);
-
-  loadSpecifiedAccountAndMonthPage($, response.request.uri)
-  // loadCSV($)
-}
+    per_month[saving.month] += saving.amount
+  }
 
 
-function onLoadSimpleLoginForm(error, response, body) {
-  console.error('error:', error); // Print the error if one occurred
-  console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
-//  console.log('body:', body); // Print the HTML for the Google homepage.
+  // Smoothing
+  var limit_hit = true
 
-  const $ = cheerio.load(body);
+  for(var iter=0;iter<10000 && limit_hit;iter++)
+  {
 
-  var form = getFormState($)
+    for(var month=1;month<months;month++)
+    {
+        var month_before=month-1
+        
+        const amt = (per_month[month] - per_month[month_before]) / 2
 
-  form.userid = "197102162539"
-  form.pin = '0820'
-  form["commonlogin$loginLight"] = "Logga in"
-  form.JAVASCRIPT_DETECTED = true
+        if(amt > 0)
+        {
+          const new_month_before = per_month[month_before] + amt
 
-//  options.headers['Content-Type'] = 'application/x-www-form-urlencoded'
-//  options.headers['Content-Length'] = postData.length
+          per_month[month] -= amt
+          per_month[month_before] = new_month_before
 
-//  console.log("POSTing login ---")
+          // console.log("Moving " + amt + " from month " + month + " to " + month_before)
+        } 
+    }
 
-  const options = getOptions(login_base_url)
-  options.form = form
+    limit_hit = false
 
-  request.post(options, onLoadAccountPage)
+    for(var month=0;month<months;month++)
+    {
+      if(per_month[month] > MAX_SAVINGS_AMOUNT)
+      {
+        limit_hit = true
+      }
+    }
+  }
 
-  // Betalning PG/BG
-}
+  var total = 0;
 
-function onLoadDefaultLoginPage(error, response, body) {
-  console.error('error:', error); // Print the error if one occurred
-  console.log('statusCode:', response && response.statusCode); // Print the response status code if a response was received
-  // console.log('body:', body); // Print the HTML for the Google homepage.
+  for(var month=0;month<months;month++)
+  {
+    const date = new Date(FIRST_SAVINGS_MONTH)
+    date.setMonth(date.getMonth() + month)
 
-  const $ = cheerio.load(body);
+    const dateStr = date.getFullYear() + "/" + (date.getMonth() + 1)
 
-// <a href="login?usecase=commonlogin&amp;command=commonlogintabcommand&amp;guid=a6L2j8v10qERP5HKBZAw4gCC&amp;commandorigin=0.commonlogintabview_SE&amp;fpid=9w0jTYoTAG0u43ZyYCysoACC7048933529372305819xxxxxxxxx&amp;commonlogintab=2&amp;hash=MUyOq7U85eXcOfeHjBU7xACC"></a>
-  const relative_login_link = $('a:contains("renklad inloggning")').attr('href')
+    total += per_month[month]
 
-  console.log("relative_login_link:" + relative_login_link)
+    console.log(dateStr + ":+" + parseInt(per_month[month]) + "  ==>" + parseInt(total))
 
-  const absolute_login_link = new URL(relative_login_link, login_base_url)
+    if(per_month[month] > MAX_SAVINGS_AMOUNT)
+    {
+      console.log("!!!TOO MUCH SAVING!!!")
+    }
 
-  console.log("absolute_login_link:" + absolute_login_link)
+    for(var s=0;s<savings.length;s++)
+    {
+      const saving=savings[s]
 
-  const options = getOptions(absolute_login_link)
-
-  request.get(options, onLoadSimpleLoginForm)
-}
-
-const options = getOptions(login_base_url)
-const loadLoginPage = request.get(options, onLoadDefaultLoginPage)
+      if(saving.month == month) {
+        total -= saving.amount
+        console.log("   " + dateStr + ":-"+saving.amount +" (" + saving.text+")  ==>" + parseInt(total))
+      }
+    }
+  }
+})
