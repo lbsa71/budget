@@ -8,8 +8,10 @@ var cache = {}
 
 const FIRST_MONTH = '2021/08'
 const LAST_MONTH = '2022/07'
-const FIRST_SAVINGS_MONTH = new Date('2022-08-01')
-const MAX_SAVINGS_AMOUNT = 18000
+const FIRST_SAVINGS_MONTH = new Date('2022-08-22')
+const FIRST_SAVINGS_AMOUNT = 70000
+const MAX_SAVINGS_AMOUNT = 20000
+const SAVINGS_ACCOUNT_NAME='_Sparande'
 
 const title_blacklist = [
   "Reservation Kortköp ".toLowerCase(),
@@ -19,7 +21,7 @@ const own_accounts = [
   { account: "3059 23 21835", category: "Susanne Cooper"},
   { account: "4190 18 69462", category: "Lars Andersson"},
   { account: "4190 00 96605", category: "Ospecificerat,Stefans Lönekonto"},
-  { account: "3059 10 50048", category: "Buffertkonto"},
+  { account: "3059 10 50048", category: SAVINGS_ACCOUNT_NAME},
   { account: "4190 00 95633", category: "Ospecificerat,Stefans Visa"},
   { account: "3059 01 66158", category: "Ospecificerat,Hedvigs Visa"},
   { account: "3059 22 86045", category: "Hedvigs Sparkonto"},
@@ -369,6 +371,7 @@ console.log("Current Month:")
 var max_saving_date = ''
 var max_saving_amount = 0
 var total_saving_amount = 0
+
 const savings = []
 
 
@@ -405,7 +408,6 @@ function add_savings(line)
   //console.log("Number of savings" + savings.length)
   }
 }
-
 
 fs.readFile("savings.txt", function(err, data) {
   if(err) throw err;
@@ -444,16 +446,17 @@ fs.readFile("savings.txt", function(err, data) {
 
 
   // Smoothing
-  var limit_hit = true
+  var max_amt = 101;
 
-  for(var iter=0;iter<10000 && limit_hit;iter++)
+  for(var iter=0;iter<10000 && max_amt > 100;iter++)
   {
+    max_amt = 100
 
-    for(var month=1;month<months;month++)
+    for(var month=months-1;month>0;month--)
     {
         var month_before=month-1
         
-        const amt = (per_month[month] - per_month[month_before]) / 2
+        const amt = parseInt((per_month[month] - per_month[month_before]) / 2)
 
         if(amt > 0)
         {
@@ -461,20 +464,16 @@ fs.readFile("savings.txt", function(err, data) {
 
           per_month[month] -= amt
           per_month[month_before] = new_month_before
-
-          // console.log("Moving " + amt + " from month " + month + " to " + month_before)
         } 
-    }
 
-    limit_hit = false
-
-    for(var month=0;month<months;month++)
-    {
-      if(per_month[month] > MAX_SAVINGS_AMOUNT)
-      {
-        limit_hit = true
-      }
+        if(amt > max_amt) max_amt = amt
     }
+  }
+
+  // Round up
+  for(var month=0;month<months;month++)
+  {
+    per_month[month]=parseInt((per_month[month]+499)/500)*500
   }
 
   var total = 0;
@@ -484,15 +483,21 @@ fs.readFile("savings.txt", function(err, data) {
     const date = new Date(FIRST_SAVINGS_MONTH)
     date.setMonth(date.getMonth() + month)
 
-    const dateStr = date.getFullYear() + "/" + (date.getMonth() + 1)
+    const dateStr = date.toISOString().split('T')[0].replace('-','/')
+    const monthStr = dateStr.substring(0,7)
+    const from =''
+    const to =''
+    const category = SAVINGS_ACCOUNT_NAME
 
-    total += per_month[month]
+    const monthlySavingAmount = per_month[month]
+    total += monthlySavingAmount
 
-    console.log(dateStr + ":+" + parseInt(per_month[month]) + "  ==>" + parseInt(total))
+    // console.log(dateStr + "\t+" + parseInt(per_month[month]) + "\t" + parseInt(total))
+    w.write(monthStr  + '\t' + dateStr + '\t' + monthlySavingAmount  + '\t' + 'Sparande'  + '\t' + from  + '\t' + to  + '\t' + category + '\t' + category + '\n')
 
     if(per_month[month] > MAX_SAVINGS_AMOUNT)
     {
-      console.log("!!!TOO MUCH SAVING!!!")
+      console.log("Month " + monthStr + " needs " + per_month[month] + " savings.")
     }
 
     for(var s=0;s<savings.length;s++)
@@ -501,7 +506,7 @@ fs.readFile("savings.txt", function(err, data) {
 
       if(saving.month == month) {
         total -= saving.amount
-        console.log("   " + dateStr + ":-"+saving.amount +" (" + saving.text+")  ==>" + parseInt(total))
+        w.write(monthStr  + '\t' + dateStr + '\t-' + saving.amount  + '\t' + saving.text  + '\t' + from  + '\t' + to  + '\t' + category + '\t' + category + '\n')
       }
     }
   }
